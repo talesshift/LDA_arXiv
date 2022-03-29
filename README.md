@@ -1,2 +1,4 @@
-# LDA_arXiv
-Appling LDA in arXiv full article database
+# LDA in arXiv
+applying LDA to the arXiv full article database 
+
+## step 1: download
