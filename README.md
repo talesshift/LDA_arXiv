@@ -26,9 +26,9 @@ screen -S GROBID
 ./gradlew run
 ```
 
-after running the server you may use the Grobid python client to parse the pdf's with the command:
+after running the server you may use the Grobid python client to parse the pdf's with the 'processFulltextDocument' command and omitting the '--output' to create the tei.xml files alongside the pdf's:
+
 ```
-#run grobid_client with the '--output' omitted so the tei.xml files are generated alongside the .pdf's
 grobid_client --input ~/tmp/in2 processFulltextDocument
 ```
 
