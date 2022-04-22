@@ -29,6 +29,6 @@ screen -S GROBID
 after running the server you may use the Grobid python client to parse the pdf's with the 'processFulltextDocument' command and omitting the '--output' to create the tei.xml files alongside the pdf's:
 
 ```
-grobid_client --input ~/tmp/in2 processFulltextDocument
+grobid_client --input ~/your_pdf_directory processFulltextDocument
 ```
 
