@@ -2,3 +2,33 @@
 applying LDA to the arXiv full article database 
 
 ## step 1: download
+following the arXiv [Documentation on Kaggle](https://www.kaggle.com/datasets/Cornell-University/arxiv) to have bullk acces to the PDF's from the cloud storage.
+
+```
+# Download all the Computer Science (cs) PDF source files
+gsutil cp -r gs://arxiv-dataset/arxiv/cs/pdf  ./a_local_directory/
+```
+## step 2: set-up GROBID
+according to [it's own doc's](https://grobid.readthedocs.io/en/latest/Introduction/), "GROBID is a machine learning library for extracting, parsing and re-structuring raw documents such as PDF into structured XML/TEI encoded documents". 
+
+To work with GROBID we need to:
+  1. install and Set-up the [GROBID java REST service](https://github.com/kermitt2/grobid#latest-version) (preferably in a high-memory server).
+  2. install the [Grobid python client](https://github.com/kermitt2/grobid_client_python), to acces the service via python.
+
+## step 3: run GROBID
+to run grobid, you first need to star the GROBID REST service, by running the following commands on the grobid directory:
+
+```
+#open a new screen named 'GROBID'
+screen -S GROBID
+
+#start GROBID service then exit the screen
+./gradlew run
+```
+
+after running the server you may use the Grobid python client to parse the pdf's with the command:
+```
+#run grobid_client with the '--output' omitted so the tei.xml files are generated alongside the .pdf's
+grobid_client --input ~/tmp/in2 processFulltextDocument
+```
+
