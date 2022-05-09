@@ -12,8 +12,7 @@ def list_xmls(glob_paths,out_file=None):
     files = []
     for path in glob_paths:
         files.extend(glob.glob(path+"*.tei.xml"))
-        print(len(files))
-    print('')
+        print('Nº of files: {}'.format(len(files)))
     for i,f in enumerate(files):
         #replace the "\" returned in the glob paths
         files[i] = f.replace('\\','/')
@@ -63,7 +62,7 @@ def create_texts(files, out_file=None):
             "citation_count":citation_count,
             "abstract":abstract
         })
-        print(len(texts),end='\r')
+        print('Nº of articles read: {}'.format(len(texts)),end='\r')
     print('')
     if (out_file != None):
         with open('./'+out_file+'.json', 'w') as fout:
@@ -74,6 +73,7 @@ def create_texts(files, out_file=None):
 #search for texts containing any strings in a set
 def search_texts(texts,search_set,fields,out_file=None):
     matches = []
+    print('search query: {}'.format(search_set))
     for text in texts:
         for field in fields:
             if text[field] != None:
@@ -81,7 +81,7 @@ def search_texts(texts,search_set,fields,out_file=None):
                     for phrase in text[field].lower().split("."):
                         if any(word in phrase for word in search_set):
                             matches.append({"ID":text["ID"],"phrase":phrase})
-                            print(len(matches),end='\r')
+                            print('Nº of phrases matching query: {}'.format(len(matches)),end='\r')
     print('')
     if (out_file != None):
         with open('./'+out_file+'.json', 'w') as fout:
@@ -112,7 +112,7 @@ def clean_text(phrases):
         #print(type(tokens_without_sw))
         cleant = " ".join(list(tokens_without_sw))
         clean_phrases.append({"ID":phrase["ID"],"phrase":(cleant)})
-        print(str(n)+"-"+str(len(tokens_without_sw)),end='\r')
+        print('Nº of phrases cleaned:{} - size: {}'.format(str(n),str(len(tokens_without_sw))),end='\r')
 
     return(clean_phrases)
     doc = pd.DataFrame(array)
@@ -172,7 +172,7 @@ def get_topic_words(model,vect):
     for i, topic_dist in enumerate(topic_word):
         topic_words = np.array(vocab)[np.argsort(topic_dist)][:-(n_top_words+1):-1]
         print('Topic {}: {}'.format(i, ' '.join(topic_words)))
-        top_topic_words.append(topic_words)
+        top_topic_words.append(list(topic_words))
     return(top_topic_words)
         
 
@@ -198,10 +198,8 @@ def test_final(out_file):
             json.dump(topics_json, fout)
     return(topics_json)
 
-
-#print (type(vects))
-#print (len(vect.get_feature_names()))
-#print(test_clean[0])
-#print(vect.vocabulary_)
-#print("")
-#(vect,vects,model)=run_test()
+#############################################
+#Problemas a resolver: 
+# - melhorar a divisão do documento em frazes (feita por .split(".")).
+# - melhorar visualização dos resultados do LDA.
+# - testar outras ferrementas de análise. 
