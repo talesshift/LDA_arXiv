@@ -37,6 +37,6 @@ at this step we use a packege of functions that handle the data in the .tei.xml 
 
 ```
 from functions import * 
-#   test_final('your__testfile_name')
+test_final('your__testfile_name')
 ```
 
