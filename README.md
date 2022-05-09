@@ -32,3 +32,11 @@ after running the server you may use the Grobid python client to parse the pdf's
 grobid_client --input ~/your_pdf_directory processFulltextDocument
 ```
 
+## step 3: search, clean and run LDA (under construction)
+at this step we use a packege of functions that handle the data in the .tei.xml files created with grobid, that search phrases containing specific terms and then running LDA on thos phrases. 
+
+```
+from functions import * 
+#   test_final('your__testfile_name')
+```
+
