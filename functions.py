@@ -196,7 +196,7 @@ def test_final(out_file):
     if (out_file != None):
         with open('./'+out_file+'.json', 'w') as fout:
             json.dump(topics_json, fout)
-    return(topics_json)
+    #return(topics_json)
 
 #############################################
 #Problemas a resolver: 
