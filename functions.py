@@ -1,9 +1,16 @@
-#EX's
-glob_paths_ex = ["./pdf/*/"]
+#usage of the tests:
+# ```
+#   from functions import * 
+#   test_final('your__testfile_name')
+# ```
 
-#1 download; 
-
-#2 pdf->xml
+#mongoDB setup
+import pymongo
+from pymongo import MongoClient
+from bson.objectid import ObjectId
+client = MongoClient()
+client = MongoClient('localhost', 27017)
+db = client.arxiv_LDA_test2_db
 
 #3 list XML's
 import glob
@@ -12,7 +19,8 @@ def list_xmls(glob_paths,out_file=None):
     files = []
     for path in glob_paths:
         files.extend(glob.glob(path+"*.tei.xml"))
-        print('Nº of files: {}'.format(len(files)))
+        print(len(files))
+    print('')
     for i,f in enumerate(files):
         #replace the "\" returned in the glob paths
         files[i] = f.replace('\\','/')
@@ -55,6 +63,7 @@ def create_texts(files, out_file=None):
         
         texts.append({
             "ID":file_id,
+            "path":file_path,
             "text":text,
             "title":title,
             "authors":authors,
@@ -62,72 +71,124 @@ def create_texts(files, out_file=None):
             "citation_count":citation_count,
             "abstract":abstract
         })
-        print('Nº of articles read: {}'.format(len(texts)),end='\r')
+        print(len(texts),end='\r')
     print('')
     if (out_file != None):
         with open('./'+out_file+'.json', 'w') as fout:
             json.dump(texts, fout)
     return(texts)
 
-
 #search for texts containing any strings in a set
-def search_texts(texts,search_set,fields,out_file=None):
+from nltk.tokenize import sent_tokenize
+from collections import namedtuple
+from langdetect import detect
+import langdetect.lang_detect_exception as ldError
+phrases = db.phrases
+def search_texts(texts,search_set,fields):
+    phrases_on_db = phrases.count_documents({})
     matches = []
-    print('search query: {}'.format(search_set))
-    for text in texts:
-        for field in fields:
-            if text[field] != None:
-                if any(word in text[field].lower() for word in search_set):
-                    for phrase in text[field].lower().split("."):
-                        if any(word in phrase for word in search_set):
-                            matches.append({"ID":text["ID"],"phrase":phrase})
-                            print('Nº of phrases matching query: {}'.format(len(matches)),end='\r')
+    if (phrases_on_db == 0):
+        print("The database is empty. running your query...")
+        matches = run_query(texts,search_set,fields);
+    else:
+        valid_ans = bool(False)
+        while (not valid_ans):
+            redo = str(input("Database already has {} phrases, do you want to retry query? Y-n".format(phrases_on_db))) 
+            if (redo in {"Y","y"}):
+                matches =run_query(texts,search_set,fields);
+                valid_ans = True
+            elif(redo in {"N","n"}):
+                cursor = phrases.find({})
+                matches = [phrase['phrase'] for phrase in cursor]
+                valid_ans = True
+            else:   
+                print("Please answer with Y,y(Yes) or N,n(No)...")
+            
+    def run_query(texts,search_set,fields):
+        phrases.drop()
+        for text in texts:
+            for field in fields:
+                if text[field] != None:
+                    for phrase in sent_tokenize(text[field]):
+                        for word in search_set:
+                            if (re.search(r"\b" + re.escape(word) + r"\b", phrase.lower())):
+                                    remove_non_alpha = re.compile('[^a-zA-Z \-]')
+                                    ratio =  len(remove_non_alpha.sub('',phrase.lower()))/len(phrase.lower())
+                                    if (ratio>0.8):
+                                        try:
+                                            lang = detect(phrase)
+                                            if (lang=='en'):
+                                                match = {"_id":len(matches),"path":text["path"],"phrase":phrase.lower(),"lenght":len(phrase),"match_word":word}
+                                                phrase_id = phrases.insert_one(match)
+                                                #matches.append(Phrase(path=text["path"],phrase=phrase.lower(),lenght=len(phrase)))
+                                                matches.append(phrase_id)
+                                                print(len(matches),end='\r')
+                                        except ldError.LangDetectException:
+                                            pass  
+        return(matches)
     print('')
-    if (out_file != None):
-        with open('./'+out_file+'.json', 'w') as fout:
-            json.dump(matches, fout)
     return(matches)
 
-#5 remove stopwords
+#5 remove stopwords & clean text
 from sklearn.feature_extraction.text import CountVectorizer
 import pandas as pd 
 import numpy as np
 import nltk
 from nltk.corpus import stopwords
+from nltk.stem.porter import PorterStemmer
+
 nltk.download('stopwords')
 nltk.download('punkt')
 from nltk.tokenize import word_tokenize
 import re
+remove_non_alpha = re.compile('[^a-zA-Z \-]')
 
-def clean_text(phrases):
-    clean_phrases =[]
-    for n,phrase in enumerate(phrases):
+def clean_text(stem=False):
+    clean_phrases = []
+    cursor = phrases.find({})
+    for n,phrase in enumerate(cursor):
 
-        regex = re.compile('[^a-zA-Z \-]')
-        string_without_punctuation = regex.sub('',phrase['phrase'])
-        string_without_punctuation = string_without_punctuation.replace('\r', '')
-        string_without_punctuation = string_without_punctuation.replace('\n', '')
-        text_tokens = word_tokenize(string_without_punctuation)
-        tokens_without_sw = [word for word in text_tokens if not word in stopwords.words()]
-        #print(type(tokens_without_sw))
-        cleant = " ".join(list(tokens_without_sw))
-        clean_phrases.append({"ID":phrase["ID"],"phrase":(cleant)})
-        print('Nº of phrases cleaned:{} - size: {}'.format(str(n),str(len(tokens_without_sw))),end='\r')
+        #get phrase text (sentence)
+        sentence = phrase["phrase"]
+
+        #remove non_alphanumeric characters
+        sentence = remove_non_alpha.sub('',sentence.lower())
+
+        #tokenize sentence
+        tokens = word_tokenize(sentence)
+
+        #remove Punctuation (already done)
+        #words = [word for word in tokens if word.isalpha()]
+        
+        #remove stopwords
+        stop_words = set(stopwords.words('english'))
+        words = [w for w in tokens if not w in stop_words]
+
+        #stem words
+        if(stem == True):
+            from nltk.stem.porter import PorterStemmer
+            porter = PorterStemmer()
+            words = [porter.stem(word) for word in tokens]
+
+        #un-tokenize string
+        cleant = " ".join(list(words))
+
+        #append clean string to list
+        clean_phrases.append(cleant)
+        print(str(n)+"-"+str(len(tokens)),end='\r')
 
     return(clean_phrases)
-    doc = pd.DataFrame(array)
 
 #5 create n_gram and vocab
 from sklearn.feature_extraction.text import CountVectorizer
 def create_n_gram(phrases):
-    phrase_list = [phrase["phrase"] for phrase in phrases]
-    doc = pd.DataFrame(phrase_list)
+    doc = pd.DataFrame(phrases)
     doc.columns = ['text']
     vect = CountVectorizer()  
     vects = vect.fit_transform(doc.text)
     return(vect,vects)
     
-#clean n_gram (optional)
+#clean n_gram (optional, DOES NOT WORK with porter stemmer)
 def clean_n_gram():
     with open('./american-english-huge','r') as f:
             eng_words_huge=set()
@@ -138,68 +199,25 @@ def clean_n_gram():
     
 #6 run LDA
 import lda 
-def run_lda(vects):
+topics = db.topics
+def run_lda(vect,vects):
     X = vects.toarray()
     model = lda.LDA(n_topics=40, n_iter=2500, random_state=1,refresh=10)
     model.fit(X)  # model.fit_transform(X) is also available
-    topic_word = model.topic_word_  # model.components_ also works
+    #lista de palavras e probabilidades de cada tópico:
+    n_words_on_topic = (model.nzw_ > 0).sum(axis=1)
+    top_word_indices_of_topics = [(-model.nzw_[a]).argsort()[:n_words_on_topic[a]] for a in range(len(n_words_on_topic))]
+    #save topics to the Db
+    topics_on_db = topics.count_documents({})
+    for i,top_word_indices in enumerate(top_word_indices_of_topics):
+        w_p = [{"word":(vect.get_feature_names())[word],"prob":np.around(model.topic_word_,5)[i][word]} for word in top_word_indices]
+        this_topic = {"_id":i,"word_probabilities":w_p}
+        if (topics_on_db == 0):
+            topics.insert_one(this_topic)
+    #add topics to the phrases in the Db
+    n_topics_on_document = (model.ndz_ > 0).sum(axis=1)
+    top_topic_indices_of_documents = [(-model.ndz_[a]).argsort()[:n_topics_on_document[a]] for a in range(len(n_topics_on_document))]
+    for i,top_topic_indices in enumerate(top_topic_indices_of_documents):
+        doc_topics = [{"topic": int(topic),"prob":float(np.around(model.doc_topic_,5)[i][topic])} for topic in top_topic_indices]
+        phrases.update_one({"_id" :int(i)},{"$set" : {"topics":doc_topics}})
     return(model)
-
-######## TESTS ##########
-
-def run_test():
-    glob_paths_ex = ["./pdf/*/"]
-    test_text = create_texts(list_xmls(glob_paths_ex))
-    test_phrases = search_texts(test_text,{"artificial intelligence", "machine learning", " ml "," ai "},{"abstract","text"})
-    test_clean = clean_text(test_phrases)
-    (vect,vects) = create_n_gram(test_clean)
-    model = run_lda(vects)
-    return(vect,vects,model)
-
-def print_model(model,vect):
-    vocab = vect.get_feature_names()
-    topic_word = model.topic_word_  # model.components_ also works
-    n_top_words = 15
-    for i, topic_dist in enumerate(topic_word):
-        topic_words = np.array(vocab)[np.argsort(topic_dist)][:-(n_top_words+1):-1]
-        print('Topic {}: {}'.format(i, ' '.join(topic_words)))
-
-def get_topic_words(model,vect):
-    vocab = vect.get_feature_names()
-    topic_word = model.topic_word_  # model.components_ also works
-    n_top_words = 15
-    top_topic_words = []
-    for i, topic_dist in enumerate(topic_word):
-        topic_words = np.array(vocab)[np.argsort(topic_dist)][:-(n_top_words+1):-1]
-        print('Topic {}: {}'.format(i, ' '.join(topic_words)))
-        top_topic_words.append(list(topic_words))
-    return(top_topic_words)
-        
-
-def phrases_json(model,vect): 
-    argamassa = [np.argmax(doc, axis=0) for doc in model.doc_topic_]
-    test_phrases = search_texts(create_texts(list_xmls(["./pdf/*/"])),{"artificial intelligence", "machine learning", " ml "," ai "},{"abstract","text"})
-    top_words = get_topic_words(model,vect)
-    def addict(i,t):
-        dicto = test_phrases[i]
-        dicto["prob"] = model.doc_topic_[i,t] 
-        return(dicto)
-    frases =[]
-    for topic in range(model.doc_topic_[0].shape[0]):
-        frases.append({"topic_id":topic,"top_words":list(top_words[topic]),"phrases":[addict(i,t) for i,t in enumerate(argamassa) if t == topic]})
-    return(frases)
-
-
-def test_final(out_file):
-    (vect,vects,model) = run_test()
-    topics_json = phrases_json(model,vect)
-    if (out_file != None):
-        with open('./'+out_file+'.json', 'w') as fout:
-            json.dump(topics_json, fout)
-    #return(topics_json)
-
-#############################################
-#Problemas a resolver: 
-# - melhorar a divisão do documento em frazes (feita por .split(".")).
-# - melhorar visualização dos resultados do LDA.
-# - testar outras ferrementas de análise. 
