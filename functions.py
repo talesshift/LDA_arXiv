@@ -87,24 +87,52 @@ def create_texts(files, out_file=None):
             json.dump(texts, fout)
     return(texts)
 
-#search for texts containing any strings in a set
 from nltk.tokenize import sent_tokenize
+def create_phrses(texts,phrases_db_name):
+    phr_db = client[phrases_db_name]
+    db_all_phrases = phr_db.all_phrases
+    all_phrases_on_db = db_all_phrases.count_documents({})
+    all_phrases = []
+    cont_file = 0
+    for text in texts:
+        cont_file = cont_file+1
+        for section in text:
+            if (section in ["text","title","abstract"]):
+                if (text[section]!= None):
+                    #print(text[section])
+                    for phrase in sent_tokenize(text[section]):
+                        phr = {
+                            "_id":len(all_phrases),
+                            "path":text["path"],
+                            "phrase":phrase.lower(),
+                            "lenght":len(phrase),
+                            "section":section
+                        }
+                        phrase_id = db_all_phrases.insert_one(phr)
+                        all_phrases.append(phrase_id)
+                        print("file: {} ----,{} phrases in total".format(cont_file,len(all_phrases)),end='\r')
+    return(all_phrases)
+
+
+#search for texts containing any strings in a set
 from collections import namedtuple
 from langdetect import detect
 import langdetect.lang_detect_exception as ldError
-def search_texts(texts,search_set,fields,db_name):
+
+def search_texts(search_set,fields,db_name,phrases_db_name):
     db = client[db_name]
+    phr_db = client[phrases_db_name]
     phrases = db.phrases
     phrases_on_db = phrases.count_documents({})
     if (phrases_on_db == 0):
         print("The database is empty. running your query...")
-        matches = run_query(texts,search_set,fields,db_name);
+        matches = run_query(search_set,fields,db_name,phrases_db_name);
     else:
         valid_ans = bool(False)
         while (not valid_ans):
             redo = str(input("Database already has {} phrases, do you want to retry query? Y-n".format(phrases_on_db))) 
             if (redo in {"Y","y"}):
-                matches =run_query(texts,search_set,fields,db_name);
+                matches =run_query(search_set,fields,db_name,phrases_db_name);
                 valid_ans = True
             elif(redo in {"N","n"}):
                 cursor = phrases.find({})
@@ -115,30 +143,38 @@ def search_texts(texts,search_set,fields,db_name):
     print('')
     return(matches)
 
-def run_query(texts,search_set,sections,db_name):
+def run_query(search_set,sections,db_name,phrases_db_name):
     db = client[db_name]
     phrases = db.phrases
     phrases.drop()
+    phr_db = client[phrases_db_name]
+    all_phrases = phr_db.all_phrases
     matches = []
-    for text in texts:
-        for section in sections:
-            if text[section] != None:
-                for phrase in sent_tokenize(text[section]):
-                    for word in search_set:
-                        if (re.search(r"\b" + re.escape(word) + r"\b", phrase.lower())):
-                                remove_non_alpha = re.compile('[^a-zA-Z \-]')
-                                ratio =  len(remove_non_alpha.sub('',phrase.lower()))/len(phrase.lower())
-                                if (ratio>0.8):
-                                    try:
-                                        lang = detect(phrase)
-                                        if (lang=='en'):
-                                            match = {"_id":len(matches),"path":text["path"],"phrase":phrase.lower(),"lenght":len(phrase),"match_word":word,"section":section}
-                                            phrase_id = phrases.insert_one(match)
-                                            #matches.append(Phrase(path=text["path"],phrase=phrase.lower(),lenght=len(phrase)))
-                                            matches.append(phrase_id)
-                                            print("{} phrase matches".format(len(matches)),end='\r')
-                                    except ldError.LangDetectException:
-                                        pass  
+    for phrase in all_phrases.find():
+        if (phrase["section"] in sections):
+            match_words = []
+            for word in search_set:
+                if (re.search(r"\b" + re.escape(word) + r"\b", phrase["phrase"].lower())):
+                    if(len(match_words)>0):
+                        phrase_id = phrases.update_one({"_id" :int(phrase["_id"])},{"$set" : {"match_word":match_words}})
+                    else:
+                        remove_non_alpha = re.compile('[^a-zA-Z \-]')
+                        ratio =  len(remove_non_alpha.sub('',phrase["phrase"].lower()))/len(phrase["phrase"].lower())
+                        if (ratio>0.8):
+                            try:
+                                lang = detect(phrase["phrase"])
+                                if (lang=='en'):
+                                    match = phrase
+                                    match["a_id"] = match["_id"]
+                                    match["_id"] = len(matches)
+                                    match["match_word"] = [word]
+                                    phrase_id = phrases.insert_one(match)
+                                    #matches.append(Phrase(path=text["path"],phrase=phrase.lower(),lenght=len(phrase)))
+                                    matches.append(phrase_id)
+                                    print("{} phrase matches".format(len(matches)),end='\r')
+                            except ldError.LangDetectException:
+                                pass  
+                    match_words.append(word)
     return(matches)
 
 #5 remove stopwords & clean text
@@ -155,12 +191,13 @@ from nltk.tokenize import word_tokenize
 import re
 remove_non_alpha = re.compile('[^a-zA-Z \-]')
 
-def clean_text(db_name,remove_w=[],stem=False):
+def clean_text(db_name,remove_w=[],join_w=[],stem=False):
     db = client[db_name]
     phrases = db.phrases
     clean_phrases = []
     cursor = phrases.find({})
     rm_w_count =0
+    join_w_count =0
     for n,phrase in enumerate(cursor):
         #get phrase text (sentence)
         sentence = phrase["phrase"]
@@ -170,7 +207,17 @@ def clean_text(db_name,remove_w=[],stem=False):
             while (re.search(r"\b" + re.escape(rm_word) + r"\b", sentence)):
                 rm_w_count = rm_w_count+1
                 sentence = re.sub(r"\b" + re.escape(rm_word) + r"\b","", sentence)
-            
+        
+        #join words from a list.
+        for join_word in join_w:
+            while (re.search(r"\b" + re.escape(join_word) + r"\b", sentence)):
+                join_w_count = join_w_count+1
+                hyphen_word = join_word.replace(" ", "-")
+                if(join_word == hyphen_word):
+                    break
+                sentence = re.sub(r"\b" + re.escape(join_word) + r"\b",hyphen_word, sentence)
+                
+
 
         #remove non_alphanumeric characters
         sentence = remove_non_alpha.sub('',sentence.lower())
@@ -198,6 +245,68 @@ def clean_text(db_name,remove_w=[],stem=False):
         clean_phrases.append(cleant)
         print(str(n)+"-"+str(len(tokens)),end='\r')
     print("{} palavras removidas".format(rm_w_count))
+    print("{} palavras unidas".format(join_w_count))
+    return(clean_phrases)
+
+def clean_all_text(db_name,remove_w=[],join_w=[],stem=False):
+    db = client[db_name]
+    phrases = db.all_phrases
+    clean_phrases = []
+    cursor = phrases.find({})
+    rm_w_count =0
+    join_w_count =0
+    for n,phrase in enumerate(cursor):
+        remove_non_alpha = re.compile('[^a-zA-Z \-]')
+        ratio =  len(remove_non_alpha.sub('',phrase["phrase"].lower()))/len(phrase["phrase"].lower())
+        if (ratio>0.8):
+            #get phrase text (sentence)
+            sentence = phrase["phrase"]
+
+            #remove words from a list.
+            for rm_word in remove_w:
+                while (re.search(r"\b" + re.escape(rm_word) + r"\b", sentence)):
+                    rm_w_count = rm_w_count+1
+                    sentence = re.sub(r"\b" + re.escape(rm_word) + r"\b","", sentence)
+            
+            #join words from a list.
+            for join_word in join_w:
+                while (re.search(r"\b" + re.escape(join_word) + r"\b", sentence)):
+                    join_w_count = join_w_count+1
+                    hyphen_word = join_word.replace(" ", "-")
+                    if(join_word == hyphen_word):
+                        break
+                    sentence = re.sub(r"\b" + re.escape(join_word) + r"\b",hyphen_word, sentence)
+                    
+
+
+            #remove non_alphanumeric characters
+            sentence = remove_non_alpha.sub('',sentence.lower())
+
+            #tokenize sentence
+            tokens = word_tokenize(sentence)
+
+            #remove Punctuation (already done)
+            #words = [word for word in tokens if word.isalpha()]
+            
+            #remove stopwords
+            stop_words = set(stopwords.words('english'))
+            words = [w for w in tokens if not w in stop_words]
+
+            #stem words
+            if(stem == True):
+                from nltk.stem.porter import PorterStemmer
+                porter = PorterStemmer()
+                words = [porter.stem(word) for word in tokens]
+
+            #un-tokenize string
+            cleant = " ".join(list(words))
+
+            #append clean string to list
+            clean_phrases.append(cleant)
+            print(str(n)+"-"+str(len(tokens)),end='\r')
+    print("")
+    print("{} palavras removidas".format(rm_w_count))
+    print("{} palavras unidas".format(join_w_count))
     return(clean_phrases)
 
 #5 create n_gram and vocab
@@ -255,7 +364,6 @@ import timeit
 def run_analysis():
     #setup mongo client
     client = MongoClient('localhost', 27017)
-    
     #create/access history of 
     hist_db = client.lda_arxiv_log
     history = hist_db.history
@@ -292,10 +400,29 @@ def run_analysis():
     glob_paths_ex = ["./pdf/*/"]
     query_words_ex = {"artificial intelligence", "machine learning", "m.l.","a.i."}
     query_sections_ex = {"abstract","text"}
-    files = list_xmls(this_analysis["docs_path_list"])
-    test_text = create_texts(files)
-    test_phrases = search_texts(test_text,this_analysis["query"]["words"],this_analysis["query"]["sections"],this_analysis["db_name"])
-    test_clean = clean_text(this_analysis["db_name"],this_analysis["query"]["words"])
+    all_phrases_db_name = "ALL_PHRASES_ARXIV"
+
+    #CHECK IF ALL_PHRASES EXISTS
+    phr_db = client[all_phrases_db_name] 
+    db_all_phrases = phr_db.all_phrases
+    all_phrases_on_db = db_all_phrases.count_documents({})
+    if(all_phrases_on_db == 0):
+            print("###list_xmls###")
+            files = list_xmls(this_analysis["docs_path_list"])
+            print("###create_texts###")
+            test_text = create_texts(files)
+            print("###create_phrses###")
+            all_phrases = create_phrses(test_text,all_phrases_db_name)
+    else:   
+        cursor = db_all_phrases.find({})
+        all_phrases = [phrase['_id'] for phrase in cursor]
+        print("###{} phrses on DB###".format(len(all_phrases)))
+
+    print("###search_texts###")
+    test_phrases = search_texts(this_analysis["query"]["words"],this_analysis["query"]["sections"],this_analysis["db_name"],all_phrases_db_name)
+    print("###clean_text###")
+    test_clean = clean_text(this_analysis["db_name"],join_w=this_analysis["query"]["words"])
+    print("###create_n_gram###")
     (vect,vects) = create_n_gram(test_clean)
     starttime = timeit.default_timer()
     print(">>> start time is :",starttime)
@@ -359,7 +486,7 @@ def input_analysis():
         valid_ans = bool(False)
         nicknames_list = [hi["nick_name"] for hi in history.find({"$query": {}, "$orderby": {"$natural" : -1}})]
         while (not valid_ans):
-            this_analysis["nick_name"] = input("wue are almost there... Just give your analysis an nickname:")
+            this_analysis["nick_name"] = input("we are almost there... Just give your analysis an nickname:")
             if (this_analysis["nick_name"] not in nicknames_list):
                 valid_ans = True
             else:
